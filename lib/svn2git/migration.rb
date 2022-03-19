@@ -252,8 +252,8 @@ module Svn2Git
     def get_branches
       # Get the list of local and remote branches, taking care to ignore console color codes and ignoring the
       # '*' character used to indicate the currently selected branch.
-      @local = run_command("git branch -l --no-color").split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
-      @remote = run_command("git branch -r --no-color").split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
+      @local = run_command("git branch -l --no-color", need_output: true).split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
+      @remote = run_command("git branch -r --no-color", need_output: true).split(/\n/).collect{ |b| b.gsub(/\*/,'').strip }
 
       # Tags are remote branches that start with "tags/".
       @tags = @remote.find_all { |b| b.strip =~ %r{^svn\/tags\/} }
@@ -289,16 +289,16 @@ module Svn2Git
 
     def fix_tags
       current = {}
-      current['user.name']  = run_command("#{git_config_command} --get user.name", false)
-      current['user.email'] = run_command("#{git_config_command} --get user.email", false)
+      current['user.name']  = run_command("#{git_config_command} --get user.name", false, need_output: true)
+      current['user.email'] = run_command("#{git_config_command} --get user.email", false, need_output: true)
 
       @tags.each do |tag|
         tag = tag.strip
         id      = tag.gsub(%r{^svn\/tags\/}, '').strip
-        subject = run_command("git log -1 --pretty=format:'%s' \"#{escape_quotes(tag)}\"").chomp("'").reverse.chomp("'").reverse
-        date    = run_command("git log -1 --pretty=format:'%ci' \"#{escape_quotes(tag)}\"").chomp("'").reverse.chomp("'").reverse
-        author  = run_command("git log -1 --pretty=format:'%an' \"#{escape_quotes(tag)}\"").chomp("'").reverse.chomp("'").reverse
-        email   = run_command("git log -1 --pretty=format:'%ae' \"#{escape_quotes(tag)}\"").chomp("'").reverse.chomp("'").reverse
+        subject = run_command("git log -1 --pretty=format:'%s' \"#{escape_quotes(tag)}\"", need_output: true).chomp("'").reverse.chomp("'").reverse
+        date    = run_command("git log -1 --pretty=format:'%ci' \"#{escape_quotes(tag)}\"", need_output: true).chomp("'").reverse.chomp("'").reverse
+        author  = run_command("git log -1 --pretty=format:'%an' \"#{escape_quotes(tag)}\"", need_output: true).chomp("'").reverse.chomp("'").reverse
+        email   = run_command("git log -1 --pretty=format:'%ae' \"#{escape_quotes(tag)}\"", need_output: true).chomp("'").reverse.chomp("'").reverse
         run_command("#{git_config_command} user.name \"#{escape_quotes(author)}\"")
         run_command("#{git_config_command} user.email \"#{escape_quotes(email)}\"")
 
@@ -348,7 +348,7 @@ module Svn2Git
         if @cannot_setup_tracking_information
           run_command(Svn2Git::Migration.checkout_svn_branch(branch))
         else
-          status = run_command("git branch --track \"#{branch}\" \"remotes/svn/#{branch}\"", false)
+          status = run_command("git branch --track \"#{branch}\" \"remotes/svn/#{branch}\"", false, need_output: true)
 
           # As of git 1.8.3.2, tracking information cannot be set up for remote SVN branches:
           # http://git.661346.n2.nabble.com/git-svn-Use-prefix-by-default-td7594288.html#a7597159
@@ -392,8 +392,26 @@ module Svn2Git
       run_command("git gc")
     end
 
-    def run_command(cmd, exit_on_error=true, printout_output=false)
+    def run_command(cmd, exit_on_error=true, printout_output=false, need_output: false)
       log "Running command: #{cmd}\n"
+
+      if need_output
+        output = `#{cmd}`
+        err_code = $?.exitstatus
+        if printout_output
+          $stdout.print output
+        end
+      else
+        output = system(cmd)
+        err_code = $?.exitstatus
+      end
+
+      if exit_on_error && err_code != 0
+        $stderr.puts "command failed:\n#{cmd}"
+        exit -1
+      end
+
+      return output
 
       ret = ''
       @stdin_queue ||= Queue.new
@@ -465,7 +483,7 @@ module Svn2Git
     end
 
     def verify_working_tree_is_clean
-      status = run_command('git status --porcelain --untracked-files=no')
+      status = run_command('git status --porcelain --untracked-files=no', need_output: true)
       unless status.strip == ''
         puts 'You have local pending changes.  The working tree must be clean in order to continue.'
         exit -1
@@ -474,7 +492,7 @@ module Svn2Git
 
     def git_config_command
       if @git_config_command.nil?
-        status = run_command('git config --local --get user.name', false)
+        status = run_command('git config --local --get user.name', false, need_output: true)
 
         @git_config_command = if status =~ /unknown option/m
                                 'git config'
